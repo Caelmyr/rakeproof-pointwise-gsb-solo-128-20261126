@@ -1,0 +1,16 @@
+name: solo131-rakeproof
+services:
+  desk:
+    build:
+      context: .
+      args:
+        RAKEPROOF_DEPS_IMAGE: ${RAKEPROOF_DEPS_IMAGE:-python:3.11-slim}
+    image: ${RAKEPROOF_IMAGE:-solo131-rakeproof:1.0}
+    network_mode: bridge
+    ports:
+      - "127.0.0.1:${RAKEPROOF_PORT:-19931}:8000"
+    volumes:
+      - inspections:/var/lib/rakeproof
+    init: true
+volumes:
+  inspections:
