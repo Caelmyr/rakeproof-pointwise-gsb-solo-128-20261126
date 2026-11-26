@@ -2,6 +2,11 @@
 
 import numpy as np
 
+from .channels import channel_section as channel_reread
+from .channels import channel_section
+
+__all__ = ["extract", "channel_section", "channel_reread"]
+
 
 def extract(evidence, settings):
     y = settings["scan_y"]

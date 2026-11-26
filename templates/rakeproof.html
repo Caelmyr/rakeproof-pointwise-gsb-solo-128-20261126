@@ -98,13 +98,21 @@
       <div><span>切线亮暗段</span><strong id="run-count"></strong></div>
     </div>
     <article class="profile-panel">
-      <header><div><h3>横切线反差</h3><p id="section-range"></p></div><span>纵轴为两照归一化亮度差（%）</span></header>
-      <canvas id="profile" height="160" aria-label="横切线反差曲线，点击读原点"></canvas>
+      <header><div><h3>横切线反差</h3><p id="section-range"></p></div><span>暖色原灰度；青色为采用/建议通道补读</span></header>
+      <section class="channel-plan" aria-label="横切线通道补读建议">
+        <div class="channel-plan-row">
+          <p id="channel-summary">正在计算通道补读…</p>
+          <button class="primary" type="button" id="adopt-channel">采用通道建议</button>
+        </div>
+        <p id="channel-detail" class="note"></p>
+        <div id="channel-switches" class="channel-switches" aria-label="通道口径切换位置"></div>
+      </section>
+      <canvas id="profile" height="180" aria-label="横切线反差曲线，点击读原点"></canvas>
       <div id="runs" class="runs" aria-label="横切线上的同向亮暗段"></div>
     </article>
     <footer class="exports">
       <div><h3>保存核验依据</h3><div class="inline" id="export-links">
-        <a data-export="proof.png">量区校样 PNG</a><a data-export="section.csv">横切线 CSV</a><a data-export="evidence.zip">下载检查包 ZIP</a>
+        <a data-export="proof.png">量区校样 PNG</a><a data-export="section.csv">横切线 CSV</a><a data-export="channel-section.csv">通道补读 CSV</a><a data-export="evidence.zip">下载检查包 ZIP</a>
       </div></div>
       <div><h3>原片继续准备</h3><div class="inline">
         <a id="prepare-left" href="{{ url_for('index') }}">准备左照 ↗</a><a id="prepare-right" href="{{ url_for('index') }}">准备右照 ↗</a>

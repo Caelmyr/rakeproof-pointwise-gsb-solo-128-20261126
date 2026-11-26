@@ -132,6 +132,7 @@ function showCard() {
         return button;
     });
     $("runs").replaceChildren(...buttons);
+    renderChannelPlan();
     for (const link of document.querySelectorAll("[data-export]")) {
         link.href = adoptedPath(card, "/" + link.dataset.export);
     }
@@ -218,11 +219,64 @@ function draw() {
     }
 }
 
+function caliberLabel(caliber) {
+    if (!caliber || caliber === "gray") return "原灰度";
+    const names = { R: "红", G: "绿", B: "蓝" };
+    return caliber.split("+").map((part) => names[part] || part).join("+") + "通道";
+}
+
+function renderChannelPlan() {
+    const channel = state.report?.channel_section;
+    const recommendation = channel?.recommendation;
+    const summary = $("channel-summary");
+    const detail = $("channel-detail");
+    const chips = $("channel-switches");
+    const adopt = $("adopt-channel");
+    if (!summary || !detail || !chips || !adopt) return;
+    chips.replaceChildren();
+    if (!channel?.length || !recommendation?.counts?.adopted) {
+        summary.textContent = "当前横切线没有可由同名通道补读的原列。";
+        detail.textContent = "";
+        adopt.disabled = true;
+        return;
+    }
+    adopt.disabled = false;
+    const c = channel.counts;
+    const p = recommendation.counts;
+    const adopted = state.card.channel_adoption;
+    const adoptedText = adopted ? "此卡已保存一版采用口径；再次点击可按当前设置重算并采用。" : "建议优先保住全部可补读列，并在同长度方案中最少换口径。";
+    summary.textContent = `建议路线读 ${p.adopted}/${c.columns} 列：原灰度 ${c.original_valid} 列，断点中保住长度 ${c.recovered}px（${c.recovered} 列）；最长连续 ${p.longest_columns ?? 0}px（X=${p.longest_start_x ?? "—"}–${p.longest_end_x ?? "—"}），换口径 ${p.switches} 次、断开 ${p.breaks} 次。`;
+    detail.textContent = adoptedText;
+    adopt.textContent = adopted ? "重新采用通道建议" : "采用通道建议";
+
+    const switchButtons = recommendation.switches.map((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "channel-switch";
+        button.textContent = `X=${item.bridge_x} 同列桥接：${caliberLabel(item.from)} → ${caliberLabel(item.to)}（${item.from_value}/${item.to_value}%，差 ${item.difference}）；X=${item.at_x} 起换口径`;
+        button.title = "点击后在该桥接原列读点";
+        button.addEventListener("click", () => readPoint(item.bridge_x, channel.y));
+        return button;
+    });
+    const breakButtons = recommendation.breaks.map((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "channel-break";
+        button.textContent = `曲线断开：X=${item.after_x} → ${item.at_x}（${caliberLabel(item.from)} / ${caliberLabel(item.to)}，${item.reason}）`;
+        button.addEventListener("click", () => readPoint(item.at_x, channel.y));
+        return button;
+    });
+    chips.replaceChildren(...switchButtons, ...breakButtons);
+}
+
 function drawProfile() {
     if (!state.report) return;
     const { samples } = state.report.section;
+    const channelSection = state.report.channel_section;
+    const channelSamples = channelSection?.samples || [];
+    const recommendation = channelSection?.recommendation;
     const width = Math.max(1, Math.round(profileCanvas.clientWidth * window.devicePixelRatio));
-    const height = Math.round(160 * window.devicePixelRatio);
+    const height = Math.round(180 * window.devicePixelRatio);
     profileCanvas.width = width;
     profileCanvas.height = height;
     const ctx = profileCanvas.getContext("2d");
@@ -231,8 +285,13 @@ function drawProfile() {
     ctx.moveTo(0, height / 2);
     ctx.lineTo(width, height / 2);
     ctx.stroke();
-    const max = samples.reduce((result, item) => Math.max(result, Math.abs(item.value ?? 0)), state.card.settings.threshold);
+    const channelMax = channelSamples.reduce((result, item) => Math.max(result, Math.abs(item.recommended_value ?? 0)), 0);
+    const max = samples.reduce((result, item) => Math.max(result, Math.abs(item.value ?? 0)), Math.max(state.card.settings.threshold, channelMax));
     const denom = Math.max(1, samples.length);
+    const yFor = (value) => height * (0.5 - value / (max * 2.3));
+    const xFor = (index) => (index + .5) * width / denom;
+
+    // Existing luminance curve: invalid/exposure columns stay broken.
     ctx.lineWidth = Math.max(1, window.devicePixelRatio);
     ctx.strokeStyle = "#e3d79e";
     ctx.beginPath();
@@ -242,13 +301,50 @@ function drawProfile() {
             connected = false;
             return;
         }
-        const x = (index + .5) * width / denom;
-        const y = height * (0.5 - sample.value / (max * 2.3));
+        const x = xFor(index);
+        const y = yFor(sample.value);
         if (connected) ctx.lineTo(x, y);
         else ctx.moveTo(x, y);
         connected = true;
     });
     ctx.stroke();
+
+    // Channel supplement/adopted route. Legal bridges remain connected; every
+    // planned break or missing channel evidence lifts the pen.
+    if (channelSamples.length && recommendation) {
+        const breakAt = new Set((recommendation.breaks || []).map((item) => item.at_x));
+        ctx.lineWidth = Math.max(2, 1.8 * window.devicePixelRatio);
+        ctx.strokeStyle = "#72e7d5";
+        ctx.beginPath();
+        connected = false;
+        channelSamples.forEach((sample, index) => {
+            const caliber = sample.recommended_caliber;
+            if (!caliber || caliber === "gray" || sample.recommended_value === null || breakAt.has(sample.x)) {
+                connected = false;
+                return;
+            }
+            const x = xFor(index);
+            const y = yFor(sample.recommended_value);
+            if (connected) ctx.lineTo(x, y);
+            else ctx.moveTo(x, y);
+            connected = true;
+        });
+        ctx.stroke();
+
+        ctx.lineWidth = Math.max(1, window.devicePixelRatio);
+        for (const item of recommendation.switches || []) {
+            const index = channelSamples.findIndex((sample) => sample.x === item.bridge_x);
+            if (index < 0) continue;
+            const x = xFor(index);
+            ctx.strokeStyle = "rgba(114,231,213,.55)";
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.moveTo(x, 6 * window.devicePixelRatio);
+            ctx.lineTo(x, height - 6 * window.devicePixelRatio);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+    }
 }
 
 function pointerPoint(event) {
@@ -283,14 +379,34 @@ async function readPoint(x, y) {
             : `${title} 无对应像素`;
         const note = {
             outside_zone: "点在量区外，保留原像读数",
-            exposure: "曝光不可用，坡向留空",
-            unpaired: "两张原照片未覆盖同一位置，坡向留空",
-            positive: "左照相对亮", negative: "右照相对亮", level: "坡向反差在阈值内",
+            exposure: "原灰度曝光不可用",
+            unpaired: "两张原照片未覆盖同一位置",
+            positive: "原灰度：左照相对亮", negative: "原灰度：右照相对亮", level: "原灰度坡向反差在阈值内",
         };
-        $("readout").textContent = [
+        const grayStatus = result.gray_status || result.status;
+        const grayResponse = result.gray_response === undefined ? result.response : result.gray_response;
+        const lines = [
             describe("左照", result.left), describe("右照", result.right),
-            note[result.status] + (result.response === null ? "" : ` · ${result.response}%`),
-        ].join("\n");
+            note[grayStatus] + (grayResponse === null ? " · 原灰度反差留空" : ` · ${grayResponse}%`),
+        ];
+        const channel = result.channel;
+        if (channel) {
+            const name = caliberLabel(channel.caliber);
+            const channelNote = {
+                no_adoption: "尚未采用通道口径；不自动换通道补数",
+                no_adopted_column: "该原列不在已采用路线中，补读反差留空，不临时换口径",
+                channel_exposure: `已采用的 ${name} 在该点缺曝光证据（${(channel.missing_channels || []).join("、")}）；保留原 RGB，补读反差留空，不临时换通道`,
+                channel_support: `已采用的 ${name} 缺双方平面校正支持；保留原 RGB，补读反差留空，不临时换通道`,
+                outside_zone: "点在量区外，通道补读未计算",
+                unpaired: "右照对应坐标不存在，通道补读留空",
+                exposure: "原像曝光证据不足，补读反差留空",
+                positive: `${name}：左照相对亮`,
+                negative: `${name}：右照相对亮`,
+                level: `${name}：坡向反差在阈值内`,
+            }[channel.status] || "通道补读留空";
+            lines.push(channelNote + (channel.response === null || channel.response === undefined ? "" : ` · 补读 ${channel.response}%`));
+        }
+        $("readout").textContent = lines.join("\n");
         draw();
     } catch (error) {
         if (request === state.pointRequest) $("readout").textContent = error.message;
@@ -330,9 +446,23 @@ $("settings").addEventListener("submit", (event) => {
     event.preventDefault();
     if (!state.card) return;
     doWork(async () => {
-        const next = await api(cardPath(state.card), asJson("PATCH", { revision: state.card.revision, ...state.draft }));
+        const settings = { ...state.draft };
+        delete settings.channel_adoption;
+        delete settings.adopted_channel;
+        const next = await api(cardPath(state.card), asJson("PATCH", { revision: state.card.revision, ...settings }));
         await openCard(next);
         status("读数设置已应用并保存。");
+    });
+});
+
+$("adopt-channel").addEventListener("click", (event) => {
+    event.preventDefault();
+    if (!state.card || state.busy || $("adopt-channel").disabled) return;
+    doWork(async () => {
+        const updated = await api(cardPath(state.card, "/channel-adoption"),
+            asJson("POST", { revision: state.card.revision, strategy: "recommended" }));
+        await openCard(updated);
+        status("已采用并保存通道补读口径；点附近另一原行时会沿用该原列的同一口径。");
     });
 });
 

@@ -12,6 +12,7 @@ from werkzeug.exceptions import NotFound
 
 from image_lab.validation import Conflict, Invalid, integer
 
+from .channels import adoption_matches, normalize_adoption
 from .geometry import default_settings, validate_settings
 
 
@@ -108,8 +109,40 @@ class Cards:
             if version != card["revision"]:
                 raise Conflict("这张卡已在另一窗口更新，请重新打开")
             changes = validate_settings(request, card["left_size"], card["right_size"])
+            if "channel_adoption" in request or "adoption" in request:
+                raw_adoption = request.get("channel_adoption", request.get("adoption"))
+                adoption = normalize_adoption(raw_adoption, changes) if raw_adoption is not None else None
+            elif any(field in request for field in (
+                "channel", "channels", "adopted_channel", "adopted_channels",
+                "adopted_caliber", "channel_caliber", "selected_channel",
+                "channel_choice", "active_channel", "channel_mode",
+                "channel_policy", "reread_channel", "section_channel",
+            )):
+                adoption = normalize_adoption(request, changes)
+            else:
+                old_adoption = card.get("channel_adoption")
+                adoption = old_adoption if adoption_matches(old_adoption, changes) else None
             metadata = {field: value for field, value in card.items() if field not in {"id", "revision", "updated"}}
             metadata["settings"] = changes
+            metadata["channel_adoption"] = adoption
+            now = datetime.now(timezone.utc).isoformat()
+            db.execute(
+                "UPDATE cards SET revision=revision+1, updated=?, metadata=? WHERE id=?",
+                (now, json.dumps(metadata, ensure_ascii=False), key),
+            )
+            return self._record(db.execute("SELECT * FROM cards WHERE id=?", (key,)).fetchone())
+
+    def save_adoption(self, key, version, adoption):
+        self._check(key)
+        version = integer(version, "核验卡版本", 1)
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            card = self._record(db.execute("SELECT * FROM cards WHERE id=?", (key,)).fetchone())
+            if version != card["revision"]:
+                raise Conflict("这张卡已在另一窗口更新，请重新打开")
+            adoption = normalize_adoption(adoption, card["settings"])
+            metadata = {field: value for field, value in card.items() if field not in {"id", "revision", "updated"}}
+            metadata["channel_adoption"] = adoption
             now = datetime.now(timezone.utc).isoformat()
             db.execute(
                 "UPDATE cards SET revision=revision+1, updated=?, metadata=? WHERE id=?",

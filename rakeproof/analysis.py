@@ -3,15 +3,20 @@
 import numpy as np
 from PIL import Image
 
+from . import channels
 from .geometry import read_box
 from .section import extract
 
 
-def summarize(card, evidence):
+def summarize(card, evidence, left=None, right=None, channel_section=None):
     settings = card["settings"]
     zone = read_box(settings["zone"], card["left_size"], "量测框")
     trustworthy = evidence.response[evidence.valid]
     threshold = settings["threshold"]
+    if channel_section is None and left is not None and right is not None:
+        channel_section = channels.channel_section(
+            left, right, settings, evidence.common, evidence.bounds, evidence=evidence
+        )
     return {
         "zone": zone.record(), "common": evidence.common.record(), "bounds": evidence.bounds.record(),
         "calibration": evidence.calibration,
@@ -22,6 +27,12 @@ def summarize(card, evidence):
             "median": round(float(np.median(trustworthy)), 3) if trustworthy.size else None,
         },
         "section": extract(evidence, settings),
+        "channel_section": channel_section,
+        "channel_reread": channel_section,
+        "reread": channel_section,
+        "channel_recommendation": (channel_section or {}).get("recommendation") if channel_section else None,
+        "channel_advice": (channel_section or {}).get("advice") if channel_section else None,
+        "channel_adoption": card.get("channel_adoption"),
     }
 
 

@@ -25,6 +25,28 @@ def section_csv(summary):
     return output.getvalue().encode("utf-8")
 
 
+def channel_section_csv(report):
+    output = StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow((
+        "left_x", "left_y", "right_x", "right_y", "caliber", "channels",
+        "channel_pct", "original_pct", "original_valid", "R_left", "R_right",
+        "G_left", "G_right", "B_left", "B_right",
+    ))
+    for sample in report.get("samples", []):
+        caliber = sample.get("recommended_caliber") or ""
+        channels = "" if not sample.get("recommended_channels") else "+".join(sample["recommended_channels"])
+        writer.writerow((
+            sample["x"], report.get("y"), sample["right_x"], sample["right_y"],
+            caliber, channels, sample.get("recommended_value"),
+            sample.get("original_value"), sample.get("original_valid"),
+            sample["channels"]["R"]["left_value"], sample["channels"]["R"]["right_value"],
+            sample["channels"]["G"]["left_value"], sample["channels"]["G"]["right_value"],
+            sample["channels"]["B"]["left_value"], sample["channels"]["B"]["right_value"],
+        ))
+    return output.getvalue().encode("utf-8")
+
+
 def proof(card, left, evidence):
     s = card["settings"]
     box = read_box(s["zone"], card["left_size"], "量测框")
@@ -45,6 +67,8 @@ def bundle(card, left, right, evidence, report):
         zf.writestr("right-source.png", encode(Image.fromarray(right)))
         zf.writestr("zone-proof.png", proof(card, left, evidence))
         zf.writestr("section.csv", section_csv(report))
+        if report.get("channel_section"):
+            zf.writestr("channel-section.csv", channel_section_csv(report["channel_section"]))
         metadata = {
             "card": card, "calibration": report["calibration"], "counts": report["counts"],
             "coordinates": "left normalized source; boxes are half-open; right = left - adopted shift",
