@@ -9,7 +9,7 @@ from flask import Blueprint, jsonify, render_template, request, send_file, url_f
 from image_lab import create_app as preparation_app
 from image_lab.validation import Conflict, Invalid, choice, integer, object_value
 
-from . import analysis, demo, exports, lighting, photo, probe
+from . import analysis, demo, exports, groove as groove_mod, lighting, photo, probe
 from .geometry import common_bounds
 from .store import Cards
 
@@ -58,9 +58,18 @@ def create_app(data=None):
 
     @desk.route("/cards/<key>", methods=["GET", "PATCH"])
     def card(key):
+        current = cards.read(key)
         if request.method == "PATCH":
-            return jsonify(cards.save(key, object_value(request.get_json(silent=True), "核验设置")))
-        return jsonify(cards.read(key))
+            payload = object_value(request.get_json(silent=True), "核验设置")
+            if "groove" in payload or "track" in payload:
+                raw_groove = payload.get("groove", payload.get("track"))
+                adopted = None if raw_groove is None else groove_mod.validate_groove(raw_groove, current["left_size"])
+                return jsonify(cards.update(key, payload, adopted, True))
+            setting_keys = {"zone", "flat", "dx", "dy", "scan_y", "balance", "threshold"}
+            if setting_keys & set(payload):
+                return jsonify(cards.update(key, payload))
+            return jsonify(cards.save(key, payload))
+        return jsonify(current)
 
     @desk.get("/cards/<key>/source/<side>.png")
     def source(key, side):
@@ -94,6 +103,98 @@ def create_app(data=None):
         calibration = lighting.flat_gain(left, right, settings, common)
         return jsonify(revision=current["revision"], **probe.inspect(left, right, settings, calibration, x, y))
 
+    def json_body():
+        value = request.get_json(silent=True)
+        return value if isinstance(value, dict) else {}
+
+    def trace_result(key):
+        current, _, _, evidence = measure(key)
+        body = json_body() if request.method in ("POST", "PUT", "PATCH") else {}
+        raw_x = body.get("x", request.args.get("x"))
+        raw_y = body.get("y", request.args.get("y", current["settings"]["scan_y"]))
+        if raw_x is None:
+            raise Invalid("请在横切线上点选一条沟")
+        x = integer(raw_x, "左照点选列", 0, current["left_size"][0] - 1)
+        y = integer(raw_y, "左照点选行", 0, current["left_size"][1] - 1)
+        track_choice = body.get("choice", request.args.get("choice", "recommended"))
+        direction = body.get("direction", request.args.get("direction", "down"))
+        result = groove_mod.trace_groove(
+            evidence, current["settings"], x, y,
+            direction=direction, choice=track_choice,
+        )
+        return current, result, body
+
+    def save_adoption(key, current, adopted, body):
+        version = body.get("revision", request.args.get("rev", current["revision"]))
+        return cards.save_groove(key, integer(version, "核验卡版本", 1), adopted)
+
+    @desk.route("/cards/<key>/groove/proposal", methods=["GET", "POST"])
+    def groove_proposal(key):
+        _, result, _ = trace_result(key)
+        return jsonify(result)
+
+    # Vocabulary aliases for the same coupled groove/width proposal.
+    desk.add_url_rule("/cards/<key>/trace", view_func=groove_proposal, methods=["GET", "POST"])
+    desk.add_url_rule("/cards/<key>/track", view_func=groove_proposal, methods=["GET", "POST"])
+    desk.add_url_rule("/cards/<key>/width", view_func=groove_proposal, methods=["GET", "POST"])
+    desk.add_url_rule("/cards/<key>/widths", view_func=groove_proposal, methods=["GET", "POST"])
+    desk.add_url_rule("/cards/<key>/grooves", view_func=groove_proposal, methods=["GET", "POST"])
+    desk.add_url_rule("/cards/<key>/groove-width", view_func=groove_proposal, methods=["GET", "POST"])
+    desk.add_url_rule("/cards/<key>/section/groove", view_func=groove_proposal, methods=["GET", "POST"])
+
+    @desk.route("/cards/<key>/groove", methods=["GET", "POST", "PUT", "DELETE"])
+    def groove_collection(key):
+        current = cards.read(key)
+        if request.method == "DELETE":
+            body = json_body()
+            saved = save_adoption(key, current, None, body)
+            return jsonify(saved)
+        if request.method == "GET":
+            if request.args.get("x") is not None:
+                _, result, _ = trace_result(key)
+                return jsonify(result)
+            adopted = current.get("groove")
+            return jsonify(groove=adopted, track=adopted, revision=current["revision"])
+
+        body = json_body()
+        raw_adopted = body.get("groove") or body.get("adoption") or body.get("track")
+        result = None
+        if raw_adopted is None and ("x" in body or request.args.get("x") is not None):
+            current, result, body = trace_result(key)
+            confirmed = body.get("adopt", body.get("confirm", body.get("confirmed", body.get("save", False))))
+            query_confirmed = request.args.get("adopt") in ("1", "true", "yes")
+            if not (confirmed is True or confirmed == "true" or query_confirmed or request.method == "PUT"):
+                return jsonify(result)
+            raw_adopted = result["adoption"]
+        if raw_adopted is None:
+            raise Invalid("请先在横切线上点选一条沟，或提交确认后的追踪结果")
+        adopted = groove_mod.validate_groove(raw_adopted, current["left_size"])
+        saved = save_adoption(key, current, adopted, body)
+        response = {"card": saved, "groove": adopted, "track": adopted}
+        if result is not None:
+            response["proposal"] = result
+        return jsonify(response), 201
+
+    @desk.post("/cards/<key>/groove/adopt")
+    def groove_adopt(key):
+        current = cards.read(key)
+        body = json_body()
+        raw_adopted = body.get("groove") or body.get("adoption") or body.get("track")
+        result = None
+        if raw_adopted is None:
+            current, result, body = trace_result(key)
+            raw_adopted = result["adoption"]
+        adopted = groove_mod.validate_groove(raw_adopted, current["left_size"])
+        saved = save_adoption(key, current, adopted, body)
+        response = {"card": saved, "groove": adopted, "track": adopted}
+        if result is not None:
+            response["proposal"] = result
+        return jsonify(response), 201
+
+    desk.add_url_rule("/cards/<key>/trace/adopt", view_func=groove_adopt, methods=["POST"])
+    desk.add_url_rule("/cards/<key>/track/adopt", view_func=groove_adopt, methods=["POST"])
+    desk.add_url_rule("/cards/<key>/width/adopt", view_func=groove_adopt, methods=["POST"])
+
     @desk.get("/cards/<key>/map.png")
     def response_map(key):
         current, _, _, evidence = measure(key)
@@ -109,6 +210,14 @@ def create_app(data=None):
     def csv(key):
         current, _, _, evidence = measure(key)
         return download(exports.section_csv(analysis.summarize(current, evidence)), "text/csv", "rakeproof-section.csv")
+
+    @desk.get("/cards/<key>/groove.csv")
+    def groove_csv_route(key):
+        current, _, _, evidence = measure(key)
+        summary = analysis.summarize(current, evidence)
+        return download(exports.groove_csv(summary), "text/csv", "rakeproof-groove.csv")
+
+    desk.add_url_rule("/cards/<key>/width.csv", view_func=groove_csv_route, methods=["GET"])
 
     @desk.get("/cards/<key>/evidence.zip")
     def bundle(key):

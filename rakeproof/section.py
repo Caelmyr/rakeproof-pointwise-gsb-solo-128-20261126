@@ -2,6 +2,12 @@
 
 import numpy as np
 
+from .groove import groove_at, trace_groove, validate_groove
+
+track_groove = trace_groove
+
+__all__ = ["extract", "trace_groove", "track_groove", "groove_at", "validate_groove"]
+
 
 def extract(evidence, settings):
     y = settings["scan_y"]

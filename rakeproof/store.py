@@ -116,3 +116,32 @@ class Cards:
                 (now, json.dumps(metadata, ensure_ascii=False), key),
             )
             return self._record(db.execute("SELECT * FROM cards WHERE id=?", (key,)).fetchone())
+
+    def update(self, key, request, groove=None, replace_groove=False):
+        """Apply a settings PATCH and/or an adopted groove in one revision."""
+        self._check(key)
+        version = integer(request.get("revision"), "核验卡版本", 1)
+        setting_keys = {"zone", "flat", "dx", "dy", "scan_y", "balance", "threshold"}
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            card = self._record(db.execute("SELECT * FROM cards WHERE id=?", (key,)).fetchone())
+            if version != card["revision"]:
+                raise Conflict("这张卡已在另一窗口更新，请重新打开")
+            metadata = {field: value for field, value in card.items() if field not in {"id", "revision", "updated"}}
+            if setting_keys & set(request):
+                merged = {**card["settings"], **request}
+                metadata["settings"] = validate_settings(merged, card["left_size"], card["right_size"])
+            if replace_groove:
+                if groove is None:
+                    metadata.pop("groove", None)
+                else:
+                    metadata["groove"] = groove
+            now = datetime.now(timezone.utc).isoformat()
+            db.execute(
+                "UPDATE cards SET revision=revision+1, updated=?, metadata=? WHERE id=?",
+                (now, json.dumps(metadata, ensure_ascii=False), key),
+            )
+            return self._record(db.execute("SELECT * FROM cards WHERE id=?", (key,)).fetchone())
+
+    def save_groove(self, key, version, groove):
+        return self.update(key, {"revision": version}, groove=groove, replace_groove=True)

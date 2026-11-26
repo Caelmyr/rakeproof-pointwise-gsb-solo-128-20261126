@@ -55,6 +55,7 @@
             <button class="mode" type="button" data-mode="zone" aria-pressed="false">框选量区</button>
             <button class="mode" type="button" data-mode="flat" aria-pressed="false">框选平面</button>
             <button class="mode" type="button" data-mode="scan" aria-pressed="false">定位横切线</button>
+            <button class="mode" type="button" id="groove-mode" data-testid="groove-mode" data-mode="groove" aria-pressed="false" aria-label="追踪浅沟：点选横切线上的一条沟并量两坡峰距">追踪浅沟</button>
           </div>
         </div>
         <div class="canvas-frame"><canvas id="photo" aria-label="左照原片坐标网格"></canvas></div>
@@ -88,6 +89,35 @@
           </form>
           <output id="readout" aria-live="polite">点原片或下方的横切线，也可输入左照坐标。</output>
         </section>
+        <section class="groove-sheet" id="groove-sheet" aria-label="浅沟两坡追踪与宽度">
+          <h3>浅沟两坡追踪</h3>
+          <p class="note" id="groove-instructions">用「追踪浅沟」点中横切线上的一条沟。左坡应为右照相对亮（蓝），右坡应为左照相对亮（橙）；两坡峰距即宽度。</p>
+          <form id="groove-form" class="inline groove-seed-form">
+            <label>沟点横坐标 X <input id="groove-x" type="number" min="0" step="1" required></label>
+            <label>沟点纵坐标 Y <input id="groove-y" type="number" min="0" step="1" required></label>
+            <button type="submit" class="primary">查找两坡</button>
+          </form>
+          <div id="groove-proposal" class="groove-proposal" hidden></div>
+          <div class="inline groove-actions" id="groove-proposal-actions" hidden>
+            <button type="button" class="primary" id="groove-adopt">确认采用建议</button>
+            <button type="button" id="groove-adopt-clear">更清楚但较短</button>
+            <button type="button" id="groove-adopt-long">最长可认范围</button>
+            <button type="button" id="groove-cancel">取消建议</button>
+          </div>
+          <div id="groove-active" class="groove-active"></div>
+          <div class="groove-table-wrap">
+            <table id="groove-table" aria-label="逐行两坡峰距">
+              <thead><tr><th scope="col">原行 Y</th><th scope="col">宽度 px</th><th scope="col">左坡 X</th><th scope="col">右坡 X</th><th scope="col">状态</th></tr></thead>
+              <tbody id="groove-rows"></tbody>
+            </table>
+          </div>
+          <div class="inline groove-actions" id="groove-edge-actions" hidden>
+            <button type="button" id="review-left-edge">点中左坡来源并复查</button>
+            <button type="button" id="review-right-edge">点中右坡来源并复查</button>
+            <button type="button" class="primary" id="review-both-edges">复查两段并核对宽度</button>
+          </div>
+          <p class="note" id="groove-check" aria-live="polite"></p>
+        </section>
       </aside>
     </div>
     <div class="metrics" aria-label="量区统计">
@@ -96,6 +126,7 @@
       <div><span>左亮坡像素</span><strong id="positive-count"></strong></div>
       <div><span>右亮坡像素</span><strong id="negative-count"></strong></div>
       <div><span>切线亮暗段</span><strong id="run-count"></strong></div>
+      <div><span>本沟本行峰距</span><strong id="groove-width-metric" data-testid="groove-width">—</strong></div>
     </div>
     <article class="profile-panel">
       <header><div><h3>横切线反差</h3><p id="section-range"></p></div><span>纵轴为两照归一化亮度差（%）</span></header>
@@ -104,7 +135,7 @@
     </article>
     <footer class="exports">
       <div><h3>保存核验依据</h3><div class="inline" id="export-links">
-        <a data-export="proof.png">量区校样 PNG</a><a data-export="section.csv">横切线 CSV</a><a data-export="evidence.zip">下载检查包 ZIP</a>
+        <a data-export="proof.png">量区校样 PNG</a><a data-export="section.csv">横切线 CSV</a><a data-export="evidence.zip">下载检查包 ZIP</a><a data-export="groove.csv">沟宽逐行 CSV</a>
       </div></div>
       <div><h3>原片继续准备</h3><div class="inline">
         <a id="prepare-left" href="{{ url_for('index') }}">准备左照 ↗</a><a id="prepare-right" href="{{ url_for('index') }}">准备右照 ↗</a>
