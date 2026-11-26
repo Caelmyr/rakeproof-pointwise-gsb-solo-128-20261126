@@ -86,6 +86,33 @@ function setMode(mode) {
     draw();
 }
 
+const closureNotes = {
+    too_short: "横切线太短，无法闭合。",
+    ends_unpaired: "横切线两端没有落在量区左右边，闭合剖面留空。",
+    row_gap: "横切线中段没有两照共同证据，闭合剖面留空。",
+    conflict: "闭合所需的校正与横切线上明确的亮暗段冲突，闭合剖面留空。",
+    outside_zone: "该行或该点不在量区内，闭合剖面留空。",
+};
+
+function closureText(closure) {
+    if (!closure || closure.status !== "closed") {
+        const gap = closure?.gaps?.length
+            ? `（无两照证据：X ${closure.gaps.map(([start, end]) => `${start}–${end - 1}`).join("、")}，共 ${closure.gap_columns} 列）`
+            : "";
+        return (closureNotes[closure?.reason] || "闭合剖面留空。") + gap;
+    }
+    const parts = [
+        `闭合方式：两端零位，逐列等额扣除 ${(-closure.step).toFixed(3)} %/列`,
+        `两端累计漂移 ${closure.drift} %·像素，按同一斜率摊回`,
+        `最高 ${closure.high}（X ${closure.high_x}，未闭合时 ${closure.high_raw}）· 最低 ${closure.low}（X ${closure.low_x}，未闭合时 ${closure.low_raw}）`,
+    ];
+    if (closure.guarded) {
+        const spans = closure.guarded_runs.map(([start, end]) => `${start}–${end - 1}`).join("、");
+        parts.push(`其中 X ${spans} 共 ${closure.guarded} 列改按 ${closure.step_low}–${closure.step_high} %/列摊，以保住明确亮暗段`);
+    }
+    return parts.join(" · ");
+}
+
 function showCard() {
     const { card, report } = state;
     $("workspace").hidden = false;
@@ -108,6 +135,7 @@ function showCard() {
     $("balance").checked = state.draft.balance;
     updateBoxText();
     const { calibration, counts, section } = report;
+    const closure = section.profile;
     const gainLabel = {
         applied: `右照平衡倍率 ${calibration.gain.toFixed(3)} · ${calibration.support.toLocaleString()} 对平面点`,
         off: "平面亮度平衡未启用",
@@ -123,6 +151,7 @@ function showCard() {
     $("section-range").textContent = section.samples.length
         ? `左照 Y=${section.y} · X=${section.origin} 至 ${section.samples.at(-1).x}`
         : `左照 Y=${section.y} · 量区内没有双照覆盖`;
+    $("closure-note").textContent = closureText(closure);
     const buttons = section.runs.map((run) => {
         const button = document.createElement("button");
         button.type = "button";
@@ -220,32 +249,47 @@ function draw() {
 
 function drawProfile() {
     if (!state.report) return;
-    const { samples } = state.report.section;
+    const { samples, profile } = state.report.section;
     const width = Math.max(1, Math.round(profileCanvas.clientWidth * window.devicePixelRatio));
     const height = Math.round(160 * window.devicePixelRatio);
     profileCanvas.width = width;
     profileCanvas.height = height;
     const ctx = profileCanvas.getContext("2d");
+    const closed = profile.status === "closed" ? profile.heights : null;
+    const raw = profile.status === "closed" ? profile.raw : null;
+    const values = closed || samples.map((sample) => sample.value);
+    const magnitude = values.reduce((result, item) => Math.max(result, Math.abs(item ?? 0)), 0) || 1;
+    const scale = height * 0.42 / magnitude;
+    const zero = height * 0.5;
+    const denom = Math.max(1, values.length);
+    const column = (index) => (index + .5) * width / denom;
     ctx.strokeStyle = "#667771";
     ctx.beginPath();
-    ctx.moveTo(0, height / 2);
-    ctx.lineTo(width, height / 2);
+    ctx.moveTo(0, zero);
+    ctx.lineTo(width, zero);
     ctx.stroke();
-    const max = samples.reduce((result, item) => Math.max(result, Math.abs(item.value ?? 0)), state.card.settings.threshold);
-    const denom = Math.max(1, samples.length);
+    if (raw) {
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = "#7d858e";
+        ctx.beginPath();
+        raw.forEach((value, index) => {
+            if (index) ctx.lineTo(column(index), zero - value * scale);
+            else ctx.moveTo(column(index), zero - value * scale);
+        });
+        ctx.stroke();
+        ctx.setLineDash([]);
+    }
     ctx.lineWidth = Math.max(1, window.devicePixelRatio);
     ctx.strokeStyle = "#e3d79e";
     ctx.beginPath();
     let connected = false;
-    samples.forEach((sample, index) => {
-        if (sample.value === null) {
+    values.forEach((value, index) => {
+        if (value === null) {
             connected = false;
             return;
         }
-        const x = (index + .5) * width / denom;
-        const y = height * (0.5 - sample.value / (max * 2.3));
-        if (connected) ctx.lineTo(x, y);
-        else ctx.moveTo(x, y);
+        if (connected) ctx.lineTo(column(index), zero - value * scale);
+        else ctx.moveTo(column(index), zero - value * scale);
         connected = true;
     });
     ctx.stroke();
@@ -287,10 +331,20 @@ async function readPoint(x, y) {
             unpaired: "两张原照片未覆盖同一位置，坡向留空",
             positive: "左照相对亮", negative: "右照相对亮", level: "坡向反差在阈值内",
         };
+        const closure = result.closure;
+        const heightNote = {
+            outside_zone: "该行不在量区，闭合高度留空",
+            ends_unpaired: "该行两端未落在量区左右边，闭合高度留空",
+            row_gap: "该行中间没有两照证据，保留两照原像，闭合高度留空",
+            conflict: "该行闭合与明确亮暗段冲突，闭合高度留空",
+            too_short: "该行太短，闭合高度留空",
+            closed: closure?.height === undefined ? "" : `自该行两端起算的相对高度 ${closure.height} %·像素（${closure.method}）`,
+        };
         $("readout").textContent = [
             describe("左照", result.left), describe("右照", result.right),
             note[result.status] + (result.response === null ? "" : ` · ${result.response}%`),
-        ].join("\n");
+            heightNote[closure.status === "closed" ? "closed" : closure.reason] || "闭合高度留空",
+        ].filter(Boolean).join("\n");
         draw();
     } catch (error) {
         if (request === state.pointRequest) $("readout").textContent = error.message;

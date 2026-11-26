@@ -15,14 +15,25 @@ from .photo import encode
 def section_csv(summary):
     output = StringIO(newline="")
     writer = csv.writer(output)
-    writer.writerow(("left_x", "left_y", "right_x", "right_y", "left_gray", "right_gray", "signed_pct"))
+    writer.writerow(("left_x", "left_y", "right_x", "right_y", "left_gray", "right_gray", "signed_pct",
+                     "raw_height_pct_px", "closed_height_pct_px"))
     section = summary["section"]
+    closure = section["profile"]
+    raw = closure["raw"] or [None] * len(section["samples"])
+    closed = closure["heights"] or [None] * len(section["samples"])
     writer.writerows(
         (sample["x"], section["y"], sample["right_x"], sample["right_y"],
-         sample["left_gray"], sample["right_gray"], sample["value"])
-        for sample in section["samples"]
+         sample["left_gray"], sample["right_gray"], sample["value"], raw[index], closed[index])
+        for index, sample in enumerate(section["samples"])
     )
     return output.getvalue().encode("utf-8")
+
+
+def closure_record(section):
+    """What the profile did, without the per-sample arrays."""
+    closure = {key: value for key, value in section["profile"].items() if key not in {"heights", "raw"}}
+    closure["y"] = section["y"]
+    return closure
 
 
 def proof(card, left, evidence):
@@ -47,6 +58,7 @@ def bundle(card, left, right, evidence, report):
         zf.writestr("section.csv", section_csv(report))
         metadata = {
             "card": card, "calibration": report["calibration"], "counts": report["counts"],
+            "closure": closure_record(report["section"]),
             "coordinates": "left normalized source; boxes are half-open; right = left - adopted shift",
         }
         zf.writestr("inspection.json", json.dumps(metadata, ensure_ascii=False, indent=2))

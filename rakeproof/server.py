@@ -9,7 +9,7 @@ from flask import Blueprint, jsonify, render_template, request, send_file, url_f
 from image_lab import create_app as preparation_app
 from image_lab.validation import Conflict, Invalid, choice, integer, object_value
 
-from . import analysis, demo, exports, lighting, photo, probe
+from . import analysis, demo, exports, lighting, photo, probe, profile
 from .geometry import common_bounds
 from .store import Cards
 
@@ -92,7 +92,10 @@ def create_app(data=None):
         settings = current["settings"]
         common = common_bounds(current["left_size"], current["right_size"], settings)
         calibration = lighting.flat_gain(left, right, settings, common)
-        return jsonify(revision=current["revision"], **probe.inspect(left, right, settings, calibration, x, y))
+        report = probe.inspect(left, right, settings, calibration, x, y)
+        found = profile.row(left, right, settings, calibration, y)
+        report["closure"] = profile.inspect_row(found, settings, x)
+        return jsonify(revision=current["revision"], **report)
 
     @desk.get("/cards/<key>/map.png")
     def response_map(key):

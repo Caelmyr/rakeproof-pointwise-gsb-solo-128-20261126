@@ -98,8 +98,9 @@
       <div><span>切线亮暗段</span><strong id="run-count"></strong></div>
     </div>
     <article class="profile-panel">
-      <header><div><h3>横切线反差</h3><p id="section-range"></p></div><span>纵轴为两照归一化亮度差（%）</span></header>
-      <canvas id="profile" height="160" aria-label="横切线反差曲线，点击读原点"></canvas>
+      <header><div><h3>横切线闭合起伏</h3><p id="section-range"></p></div><span>纵轴为相对高度（反差 % × 像素）</span></header>
+      <canvas id="profile" height="160" aria-label="横切线闭合剖面，虚线为未闭合积分，点击读原点"></canvas>
+      <p id="closure-note" class="note"></p>
       <div id="runs" class="runs" aria-label="横切线上的同向亮暗段"></div>
     </article>
     <footer class="exports">
